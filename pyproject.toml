@@ -14,3 +14,6 @@ dependencies = ["wheel"]
 [project.scripts]
 unframe = "unframe.unframe:main"
 
+[tool.setuptools.data-files]
+"share/unframe/examples" = ["examples/*"]
+
