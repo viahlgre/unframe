@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unframe"
+version = "0.1.0"
+description = "CLI tool to add or change local version tags to Python wheel files"
+authors = [{ name="Ville Ahlgren", email="ville.ahlgren@csc.fi" }]
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = ["wheel"]
+
+[project.scripts]
+unframe = "unframe.unframe:main"
+
