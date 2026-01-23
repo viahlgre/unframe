@@ -105,11 +105,14 @@ def cartesian_params(param_dict):
     return combos
 
 
-def run_argv(argv, env, cwd, timeout):
+def run_argv(argv, env, cwd, timeout, verbose=False):
     env_all = os.environ.copy()
     env_all.update({k: str(v) for k, v in env.items()})
     t0 = time.time()
-    #print("argv:", " ".join(argv))
+
+    if verbose:
+        print("argv:", " ".join(argv))
+
     proc = subprocess.run(
         argv,
         cwd=cwd,
@@ -121,7 +124,10 @@ def run_argv(argv, env, cwd, timeout):
         proc.stdout = proc.stdout.decode("utf-8", "replace")
     if isinstance(proc.stderr, bytes):
         proc.stderr = proc.stderr.decode("utf-8", "replace")
-    #print("proc.stdout:", proc.stdout)
+
+    if verbose:
+        print("proc.stdout:", proc.stdout)
+        print("proc.stderr:", proc.stderr)
 
     dt = time.time() - t0
     return proc.returncode, proc.stdout, proc.stderr, dt
@@ -203,6 +209,7 @@ def main():
     ap = argparse.ArgumentParser(prog="unframe", description="Tiny YAML-driven test runner")
     ap.add_argument("-d", "--dir", required=True, help="tests directory (YAML files)")
     ap.add_argument("-t", "--tag", action="append", help="run tests matching this tag (repeatable)")
+    ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--sysenv", default="generic:default", help="label in perflogs")
     ap.add_argument("--timeout", type=int, default=None, help="per-run timeout (seconds)")
     ap.add_argument("--prefix", default="out", help="output prefix (perflogs/...)")
@@ -273,7 +280,9 @@ def main():
 
             # run
             try:
-                rc, out, err, dt = run_argv(argv, env_vars, spec.get("workdir"), args.timeout)
+                rc, out, err, dt = run_argv(
+                    argv, env_vars, spec.get("workdir"), args.timeout, verbose=args.verbose,
+                )
             except subprocess.TimeoutExpired:
                 line = " ".join("{:>14s}".format(str(params.get(k, ""))) for k in pkeys) if pkeys else ""
                 print((line + " ").rstrip(), "[FAIL]", "timeout")
