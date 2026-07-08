@@ -22,6 +22,7 @@ Runner:
 """
 
 import argparse
+import concurrent.futures
 import csv
 import itertools
 import json
@@ -105,32 +106,65 @@ def cartesian_params(param_dict):
     return combos
 
 
-def run_argv(argv, env, cwd, timeout, verbose=False):
+def log_stdio(stream, file):
+    """
+    Read lines from IO stream.
+    Write to a file for debugging and into memory for further processing.
+    """
+    lines = []
+    for line in stream:
+        lines.append(line)
+        file.write(line)
+    return "\n".join(lines)
+
+
+def run_argv(argv, env, cwd, timeout, prefix, name, iolog_timestamp, params):
     env_all = os.environ.copy()
     env_all.update({k: str(v) for k, v in env.items()})
     t0 = time.time()
 
-    if verbose:
-        print("argv:", " ".join(argv))
+    outdir = Path(prefix) / "stdio" / iolog_timestamp
+    outdir.mkdir(parents=True, exist_ok=True)
+    stdio_file = outdir / f"{name}.out"
 
-    proc = subprocess.run(
-        argv,
-        cwd=cwd,
-        env=env_all,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if isinstance(proc.stdout, bytes):
-        proc.stdout = proc.stdout.decode("utf-8", "replace")
-    if isinstance(proc.stderr, bytes):
-        proc.stderr = proc.stderr.decode("utf-8", "replace")
+    returncode = 1  # Default to fail
+    stdout = ""
+    stderr = ""
 
-    if verbose:
-        print("proc.stdout:", proc.stdout)
-        print("proc.stderr:", proc.stderr)
+    with open(stdio_file, "a", buffering=1) as file:
+        file.write(f"params:\n{params}\n\n")
+        file.write(f"argv:\n{argv}\n\n")
+        file.write(f"stdio:\n")
+
+        try:
+            proc = subprocess.Popen(
+                argv,
+                cwd=cwd,
+                env=env_all,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                future_out = executor.submit(log_stdio, proc.stdout, file)
+                future_err = executor.submit(log_stdio, proc.stderr, file)
+
+                proc.wait(timeout)
+
+                returncode = proc.returncode
+                stdout = future_out.result()
+                stderr = future_err.result()
+
+        except Exception as err:
+            file.write(str(err) + "\n")
+
+        finally:
+            file.write(40 * "#" + "\n")
 
     dt = time.time() - t0
-    return proc.returncode, proc.stdout, proc.stderr, dt
+    return returncode, stdout, stderr, dt
 
 
 def write_perflog(prefix, sysenv, testname, params, duration_s, status, message, results):
@@ -212,7 +246,6 @@ def main():
     ap.add_argument("-d", "--dir", required=True, help="tests directory (YAML files)")
     ap.add_argument("-n", "--name", action="append", help="run tests matching this name (repeatable)")
     ap.add_argument("-t", "--tag", action="append", help="run tests matching this tag (repeatable)")
-    ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--sysenv", default="generic:default", help="label in perflogs")
     ap.add_argument("--timeout", type=int, default=None, help="per-run timeout (seconds)")
     ap.add_argument("--prefix", default="out", help="output prefix (perflogs/...)")
@@ -240,6 +273,8 @@ def main():
         sys.exit(2)
 
     any_fail = False
+
+    iolog_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     for spec in tests:
         name = spec.get("name") or Path(spec["_file"]).stem
@@ -294,7 +329,8 @@ def main():
             # run
             try:
                 rc, out, err, dt = run_argv(
-                    argv, env_vars, spec.get("workdir"), args.timeout, verbose=args.verbose,
+                    argv, env_vars, spec.get("workdir"), args.timeout,
+                    args.prefix, name, iolog_timestamp, params
                 )
             except subprocess.TimeoutExpired:
                 line = " ".join("{:>14s}".format(str(params.get(k, ""))) for k in pkeys) if pkeys else ""
